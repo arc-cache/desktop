@@ -1,0 +1,130 @@
+/**
+ * usePaneResize — handles drag logic for N-1 split handles in multi-pane split view.
+ *
+ * Each handle adjusts the width fractions of the two adjacent panes.
+ * Uses the same ref + mousemove/mouseup pattern as other resize hooks.
+ */
+
+import { useCallback, useRef, useState } from "react";
+import {
+  MIN_PANE_WIDTH_FRACTION,
+  equalWidthFractions,
+} from "@/lib/layout/constants";
+import { solveAdjacentResize } from "@/lib/layout/workspace-constraints";
+
+interface UsePaneResizeOptions {
+  /** Width fractions for all panes (length = pane count). */
+  widthFractions: number[];
+  /** Setter for width fractions during drag. */
+  setWidthFractions: (fractions: number[]) => void;
+  /** Ref to the container element encompassing all panes. */
+  containerRef: React.RefObject<HTMLDivElement | null>;
+  /** Optional per-pane minimum widths in pixels. */
+  minWidthsPx?: number[];
+  /** Optional handle width to subtract from total content width. */
+  handleWidthPx?: number;
+}
+
+export function usePaneResize({
+  widthFractions,
+  setWidthFractions,
+  containerRef,
+  minWidthsPx,
+  handleWidthPx = 0,
+}: UsePaneResizeOptions) {
+  const [isResizing, setIsResizing] = useState(false);
+  const startXRef = useRef(0);
+  const startFractionsRef = useRef<number[]>([]);
+  const containerWidthRef = useRef(0);
+  const handleIndexRef = useRef(0);
+
+  /**
+   * Start resizing at a specific handle index.
+   * Handle 0 sits between panes 0 and 1, handle 1 between panes 1 and 2, etc.
+   */
+  const handleSplitResizeStart = useCallback(
+    (handleIndex: number, e: React.MouseEvent) => {
+      e.preventDefault();
+      const container = containerRef.current;
+      if (!container) return;
+
+      setIsResizing(true);
+      startXRef.current = e.clientX;
+      startFractionsRef.current = [...widthFractions];
+      containerWidthRef.current = container.getBoundingClientRect().width;
+      handleIndexRef.current = handleIndex;
+
+      const handleMove = (moveEvent: MouseEvent) => {
+        const deltaX = moveEvent.clientX - startXRef.current;
+        const idx = handleIndexRef.current;
+        const minWidths = minWidthsPx;
+
+        if (minWidths && minWidths.length === startFractionsRef.current.length) {
+          const constrained = solveAdjacentResize(
+            startFractionsRef.current,
+            idx,
+            deltaX,
+            containerWidthRef.current,
+            minWidths,
+            handleWidthPx,
+          );
+          if (constrained) {
+            setWidthFractions(constrained);
+          }
+          return;
+        }
+
+        const deltaFraction = deltaX / containerWidthRef.current;
+        const fractions = [...startFractionsRef.current];
+
+        // Adjust the two adjacent panes
+        let leftNew = fractions[idx] + deltaFraction;
+        let rightNew = fractions[idx + 1] - deltaFraction;
+
+        // Clamp both to minimum
+        if (leftNew < MIN_PANE_WIDTH_FRACTION) {
+          const overflow = MIN_PANE_WIDTH_FRACTION - leftNew;
+          leftNew = MIN_PANE_WIDTH_FRACTION;
+          rightNew -= overflow;
+        }
+        if (rightNew < MIN_PANE_WIDTH_FRACTION) {
+          const overflow = MIN_PANE_WIDTH_FRACTION - rightNew;
+          rightNew = MIN_PANE_WIDTH_FRACTION;
+          leftNew -= overflow;
+        }
+
+        // Final clamp
+        leftNew = Math.max(MIN_PANE_WIDTH_FRACTION, leftNew);
+        rightNew = Math.max(MIN_PANE_WIDTH_FRACTION, rightNew);
+
+        fractions[idx] = leftNew;
+        fractions[idx + 1] = rightNew;
+
+        // Normalize all fractions to sum=1
+        const sum = fractions.reduce((a, b) => a + b, 0);
+        setWidthFractions(fractions.map(f => f / sum));
+      };
+
+      const handleUp = () => {
+        setIsResizing(false);
+        document.removeEventListener("mousemove", handleMove);
+        document.removeEventListener("mouseup", handleUp);
+      };
+
+      document.addEventListener("mousemove", handleMove);
+      document.addEventListener("mouseup", handleUp);
+    },
+    [containerRef, handleWidthPx, minWidthsPx, setWidthFractions, widthFractions],
+  );
+
+  /** Reset all panes to equal widths. */
+  const handleSplitDoubleClick = useCallback(() => {
+    setWidthFractions(equalWidthFractions(widthFractions.length));
+  }, [setWidthFractions, widthFractions.length]);
+
+  return {
+    isResizing,
+    handleSplitResizeStart,
+    handleSplitDoubleClick,
+  };
+}

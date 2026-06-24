@@ -1,0 +1,53 @@
+{
+  "name": "agent-run-cache",
+  "version": "2.0.0",
+  "description": "Local run cache for coding-agent CLI sessions.",
+  "type": "module",
+  "bin": {
+    "arc": "./dist/cli.js",
+    "agent-run-cache": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "scripts/verify-desktop-contract.mjs",
+    "scripts/verify-desktop-ollama.mjs",
+    "scripts/verify-local-embeddings.mjs",
+    "NOTICE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc && chmod +x dist/cli.js",
+    "app:install": "pnpm --dir apps/arc-app install",
+    "app:start": "node dist/cli.js start",
+    "app:dev": "npm run build && node dist/cli.js app-dev",
+    "app:build": "pnpm --dir apps/arc-app build",
+    "app:icons": "node scripts/generate-app-icons.mjs",
+    "app:package": "npm run app:icons && npm run build && node -e \"require('fs').rmSync('apps/arc-app/release',{recursive:true,force:true})\" && pnpm --dir apps/arc-app build && pnpm --dir apps/arc-app exec electron-builder --dir --config electron-builder.config.js && node scripts/verify-arc-app-package.mjs && node scripts/verify-packaged-cold-launch.mjs",
+    "app:package:linux": "npm run build && node -e \"const fs=require('fs');fs.rmSync('apps/arc-app/release',{recursive:true,force:true});fs.mkdirSync('apps/arc-app/.tmp-electron-builder',{recursive:true})\" && pnpm --dir apps/arc-app build && cd apps/arc-app && TMPDIR=$PWD/.tmp-electron-builder pnpm exec electron-builder --linux --config electron-builder.config.js && cd ../.. && node scripts/verify-arc-app-package.mjs",
+    "app:package:linux:deb": "npm run build && node -e \"const fs=require('fs');fs.rmSync('apps/arc-app/release',{recursive:true,force:true});fs.mkdirSync('apps/arc-app/.tmp-electron-builder',{recursive:true})\" && pnpm --dir apps/arc-app build && cd apps/arc-app && TMPDIR=$PWD/.tmp-electron-builder pnpm exec electron-builder --linux deb --config electron-builder.config.js && cd ../.. && node scripts/verify-arc-app-package.mjs",
+    "app:install:signed": "node scripts/install-signed-mac.mjs",
+    "app:release:mac": "node scripts/release-mac.mjs",
+    "app:ship": "node scripts/ship-arc-app.mjs",
+    "prepare": "npm run build",
+    "postinstall": "node -e \"console.log('Agent Run Cache installed. In a repo checkout, run npm run app:start to open the ARC desktop workbench.')\"",
+    "test": "npm run build && node --test test/*.test.js",
+    "verify:desktop:ollama": "npm run build && node scripts/verify-desktop-ollama.mjs",
+    "verify:desktop:contract": "npm run build && node scripts/verify-desktop-contract.mjs",
+    "verify:app:package": "node scripts/verify-arc-app-package.mjs",
+    "verify:local-embeddings": "npm run build && node scripts/verify-local-embeddings.mjs",
+    "reset": "node dist/cli.js reset --yes",
+    "smoke": "npm run build && node dist/cli.js smoke"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^0.25.0",
+    "@github/copilot-sdk": "^1.0.0"
+  }
+}

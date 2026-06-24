@@ -1,0 +1,71 @@
+# OS/editor
+.DS_Store
+.idea/
+.vscode/
+.mcp.json
+.codex/
+.local/
+.github/hooks/agent-run-cache.json
+.github/extensions/agent-run-cache/
+logs*
+
+# Local project planning / private notes
+/AGENTS.md
+/wiki/
+/sources/
+/*.md
+!/README.md
+
+# Vendored/private agent metadata
+/apps/arc-app/.agents/
+/apps/arc-app/.claude/
+/apps/arc-app/.github/
+/apps/arc-app/.harnss/
+/apps/arc-app/skills-lock.json
+
+# Local language/tool caches
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+*.pyc
+.playwright-cli/
+/output/
+
+# Node
+node_modules/
+dist/
+build/
+!/apps/arc-app/build/
+!/apps/arc-app/build/entitlements.mac.plist
+!/apps/arc-app/build/icon.svg
+!/apps/arc-app/build/icon.png
+!/apps/arc-app/build/icon.icns
+target/
+coverage/
+*.tgz
+*.bundle
+
+# Local runtime data
+.env
+.env.*
+!.env.example
+/supabase/
+/stripe/
+/billing/
+/private/
+.agent-run-cache/
+test_cache_*/
+*.sqlite
+*.sqlite3
+*.db
+
+# Logs
+*.log
+
+# Ad-hoc local replay fixtures
+examples/live-sidecar-operational-session.jsonl
+ARC-app.zip
+ARC-app.zip.sha256

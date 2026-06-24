@@ -1,0 +1,130 @@
+import {
+  APP_SIDEBAR_WIDTH,
+  ISLAND_LAYOUT_MARGIN,
+  MIN_RIGHT_PANEL_WIDTH,
+  MIN_TOOLS_PANEL_WIDTH,
+  SPLIT_HANDLE_WIDTH,
+  WINDOWS_FRAME_BUFFER_WIDTH,
+  getMinChatWidth,
+  getResizeHandleWidth,
+  getToolPickerWidth,
+} from "@/lib/layout/constants";
+import {
+  getChatPaneMinWidthPx,
+  getRequiredTopRowWidth,
+  type TopRowLayoutItemKind,
+} from "@/lib/layout/workspace-constraints";
+
+export type SplitAddRejectionReason =
+  | "missing-session"
+  | "active-session"
+  | "duplicate-session"
+  | "insufficient-width";
+
+export interface SplitAddGuardInput {
+  sessionId: string | null | undefined;
+  activeSessionId: string | null;
+  visibleSessionIds: readonly string[];
+  maxPaneCount: number;
+}
+
+export interface AppMinimumWidthInput {
+  sidebarOpen: boolean;
+  isIslandLayout: boolean;
+  hasActiveSession: boolean;
+  hasRightPanel: boolean;
+  hasToolsColumn: boolean;
+  toolsColumnWidth?: number;
+  isSplitViewEnabled: boolean;
+  splitPaneCount: number;
+  splitTopRowItemKinds?: TopRowLayoutItemKind[];
+  isWindows: boolean;
+}
+
+export function getRequiredSplitContentWidth(paneCount: number): number {
+  const minSplitChatWidth = getChatPaneMinWidthPx("split");
+  if (paneCount <= 1) {
+    return minSplitChatWidth;
+  }
+
+  return (minSplitChatWidth * paneCount) + (SPLIT_HANDLE_WIDTH * (paneCount - 1));
+}
+
+export function getMaxVisibleSplitPaneCount(availableWidth: number): number {
+  if (!Number.isFinite(availableWidth) || availableWidth <= 0) {
+    return 1;
+  }
+
+  const paneWidthWithHandle = getChatPaneMinWidthPx("split") + SPLIT_HANDLE_WIDTH;
+  return Math.max(1, Math.floor((availableWidth + SPLIT_HANDLE_WIDTH) / paneWidthWithHandle));
+}
+
+export function getSplitAddRejectionReason({
+  sessionId,
+  activeSessionId,
+  visibleSessionIds,
+  maxPaneCount,
+}: SplitAddGuardInput): SplitAddRejectionReason | null {
+  const normalizedSessionId = typeof sessionId === "string" ? sessionId.trim() : "";
+  if (!normalizedSessionId) {
+    return "missing-session";
+  }
+
+  if (normalizedSessionId === activeSessionId) {
+    return "active-session";
+  }
+
+  if (visibleSessionIds.includes(normalizedSessionId)) {
+    return "duplicate-session";
+  }
+
+  if (visibleSessionIds.length >= maxPaneCount) {
+    return "insufficient-width";
+  }
+
+  return null;
+}
+
+export function getAppMinimumWidth({
+  sidebarOpen,
+  isIslandLayout,
+  hasActiveSession,
+  hasRightPanel,
+  hasToolsColumn,
+  toolsColumnWidth,
+  isSplitViewEnabled,
+  splitPaneCount,
+  splitTopRowItemKinds,
+  isWindows,
+}: AppMinimumWidthInput): number {
+  const sidebarWidth = sidebarOpen ? APP_SIDEBAR_WIDTH : 0;
+  const outerMarginWidth = isIslandLayout ? ISLAND_LAYOUT_MARGIN : 0;
+  const windowsFrameWidth = isWindows ? WINDOWS_FRAME_BUFFER_WIDTH : 0;
+
+  if (isSplitViewEnabled && splitPaneCount > 1) {
+    const splitContentWidth = splitTopRowItemKinds && splitTopRowItemKinds.length > 0
+      ? getRequiredTopRowWidth(splitTopRowItemKinds, "split")
+      : getRequiredSplitContentWidth(splitPaneCount);
+    return sidebarWidth
+      + outerMarginWidth
+      + splitContentWidth
+      + windowsFrameWidth;
+  }
+
+  const minSingleChatWidth = hasActiveSession
+    ? getChatPaneMinWidthPx("single")
+    : getMinChatWidth(isIslandLayout);
+  let minimumWidth = sidebarWidth + outerMarginWidth + minSingleChatWidth + windowsFrameWidth;
+  if (!hasActiveSession) {
+    return minimumWidth;
+  }
+
+  minimumWidth += getToolPickerWidth(isIslandLayout);
+  if (hasRightPanel) {
+    minimumWidth += MIN_RIGHT_PANEL_WIDTH + getResizeHandleWidth(isIslandLayout);
+  }
+  if (hasToolsColumn) {
+    minimumWidth += Math.max(MIN_TOOLS_PANEL_WIDTH, toolsColumnWidth ?? 0) + getResizeHandleWidth(isIslandLayout);
+  }
+  return minimumWidth;
+}

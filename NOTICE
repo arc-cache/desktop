@@ -1,0 +1,9 @@
+Agent Run Cache (ARC)
+
+The ARC runtime at the repository root is licensed under the Apache License,
+Version 2.0. See LICENSE.
+
+The desktop app under apps/arc-app includes MIT-licensed app code. See
+apps/arc-app/LICENSE.
+
+Release builds include these notices under the app resources/licenses directory.

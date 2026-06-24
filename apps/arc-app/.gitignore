@@ -1,0 +1,12 @@
+node_modules/
+dist/
+electron/dist/
+logs/
+*.log
+.DS_Store
+docs/
+/release/
+.claude/agent-memory/
+frontend/
+cli
+.idea/.agent-run-cache/
