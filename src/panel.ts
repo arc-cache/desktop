@@ -8,6 +8,7 @@ import { PANEL_HTML } from "./panel-html.js";
 import { cacheDir, memoryEventsPath, memoryPath, workspaceRoot } from "./paths.js";
 import { buildInjectionPlan } from "./retrieval.js";
 import { debug, loadCapsules, updateCapsuleMetadata } from "./store.js";
+import { buildMetricsReport, loadTelemetryRecords } from "./telemetry.js";
 
 export interface PanelOptions {
   workspace?: string;
@@ -87,7 +88,11 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
     return;
   }
   if (request.method === "GET" && path === "/api/status") {
-    const [capsules, events] = await Promise.all([loadCapsules(requestWorkspace), loadMemoryEvents(requestWorkspace)]);
+    const [capsules, events, telemetry] = await Promise.all([
+      loadCapsules(requestWorkspace),
+      loadMemoryEvents(requestWorkspace),
+      loadTelemetryRecords(requestWorkspace)
+    ]);
     sendJson(response, 200, {
       workspace: requestWorkspace,
       cacheDir: cacheDir(requestWorkspace),
@@ -95,6 +100,8 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
       memoryEventsPath: memoryEventsPath(requestWorkspace),
       capsuleCount: capsules.length,
       eventCount: events.length,
+      telemetryCount: telemetry.length,
+      runCount: telemetry.filter((record) => record.kind === "run").length,
       generatedAt: new Date().toISOString()
     });
     return;
@@ -107,6 +114,10 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
     const limit = boundedLimit(url.searchParams.get("limit"));
     const events = await loadMemoryEvents(requestWorkspace);
     sendJson(response, 200, { total: events.length, events: events.slice(-limit).reverse() });
+    return;
+  }
+  if (request.method === "GET" && path === "/api/metrics") {
+    sendJson(response, 200, await buildMetricsReport(requestWorkspace));
     return;
   }
   if (request.method === "GET" && path === "/api/probe") {

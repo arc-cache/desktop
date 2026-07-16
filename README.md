@@ -79,6 +79,56 @@ ARC runs in six stages. The capsule forms in stages two through four.
    drops out of the suggestions, because a confidently wrong command is worse than
    none.
 
+## Run telemetry and policy
+
+The Copilot ACP middleware also writes a redacted local run record to
+`.agent-run-cache/telemetry.jsonl`. It keeps tool kind, paired duration and outcome,
+retry counts, session outcome, observed model latency, token usage, cost provenance,
+and retrieval outcome. It does not keep prompts, commands, tool output, paths, or
+workspace text in telemetry. Native ACP usage and cost are labeled `provider`; when
+usage is absent, token counts are labeled `estimate` and cost remains `unknown`.
+
+Run `arc metrics --json` for latency percentiles, failed-tool rate, token/cost totals,
+policy warnings, per-session costs, and recorded-trace replay results. The same view is
+available under Metrics in `arc panel`. `arc replay-eval --json` runs just the replay
+checks: observed retrieval precision, weak-match abstention, stale-capsule rejection,
+telemetry redaction, and whether an injected run had a clean successful outcome. The
+help result is deliberately identified as a deterministic observational proxy, not a
+causal claim.
+
+Warning and hard reviewer budgets are configured locally in
+`.agent-run-cache/telemetry-policy.json`:
+
+```json
+{
+  "warnings": {
+    "costUsdPerSession": 2,
+    "slowToolMs": 30000,
+    "repeatedFailures": 2,
+    "retriesPerSession": 3
+  },
+  "reviewer": {
+    "maxCallsPerSession": 4,
+    "hardCostUsdPerSession": 0.5,
+    "estimatedCostUsdPerCall": 0.08
+  }
+}
+```
+
+Omit a value to use the default, or set it to `false` to disable that budget. A
+reviewer cost hard limit can stop before the next ARC-controlled strong review when
+`estimatedCostUsdPerCall` is set; without a per-call estimate it stops once known
+reviewer cost reaches the limit. The estimate is always labeled as such. Environment
+overrides use `AGENT_RUN_CACHE_WARN_COST_USD`,
+`AGENT_RUN_CACHE_WARN_SLOW_TOOL_MS`,
+`AGENT_RUN_CACHE_WARN_REPEATED_FAILURES`,
+`AGENT_RUN_CACHE_WARN_RETRIES`, `AGENT_RUN_CACHE_REVIEWER_MAX_CALLS`,
+`AGENT_RUN_CACHE_REVIEWER_HARD_COST_USD`, and
+`AGENT_RUN_CACHE_REVIEWER_ESTIMATED_COST_USD_PER_CALL`.
+
+Debug bundles include only the sanitized aggregate metrics and evaluations, never the
+raw telemetry records.
+
 ## What ARC will not do
 
 It is not a notes app and not a general memory store. It keeps evidence-backed

@@ -49,6 +49,15 @@ export async function buildInjectionPlan(prompt: string, workspace: string, cont
     const capsule = shortlist.find((item) => item.id === sidecar.capsuleId) ?? capsules.find((item) => item.id === sidecar.capsuleId);
     if (capsule && !matchesDoNotReuse(normalize(prompt), capsule)) {
       const current = await flagCapsuleStaleness(capsule, workspace);
+      if (current.staleness?.stale) {
+        return {
+          shouldInject: false,
+          capsule: current,
+          reason: `stale capsule rejected: ${current.staleness.reasons.slice(0, 3).join("; ") || current.id}`,
+          message: "",
+          source: "sidecar"
+        };
+      }
       const used = await incrementCapsuleUse(current.id, workspace);
       return {
         shouldInject: true,
@@ -70,6 +79,15 @@ export async function buildInjectionPlan(prompt: string, workspace: string, cont
   const capsule = ranked.available ? ranked.best : selectCapsule(matchText, capsules);
   if (!capsule) return { shouldInject: false, message: "", reason: sidecar?.reason ?? sidecarFailure ?? "no matching capsule", source: "local" };
   const current = await flagCapsuleStaleness(capsule, workspace);
+  if (current.staleness?.stale) {
+    return {
+      shouldInject: false,
+      capsule: current,
+      message: "",
+      reason: `stale capsule rejected: ${current.staleness.reasons.slice(0, 3).join("; ") || current.id}`,
+      source: "local"
+    };
+  }
   const used = await incrementCapsuleUse(current.id, workspace);
   return {
     shouldInject: true,

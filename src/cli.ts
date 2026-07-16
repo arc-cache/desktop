@@ -16,6 +16,7 @@ import { buildInjectionPlan } from "./retrieval.js";
 import { loadCapsules, saveCapsule } from "./store.js";
 import { handleCopilotHook } from "./hooks.js";
 import { workspaceRoot, cacheDir, appCacheDir, desktopStatePaths, copilotTranscriptPath, debugPath } from "./paths.js";
+import { buildMetricsReport, runReplayEvaluations } from "./telemetry.js";
 
 const [command, ...args] = process.argv.slice(2);
 
@@ -73,6 +74,14 @@ try {
     const result = await writeDebugBundle(args[0]);
     console.log(`wrote redacted debug bundle to ${result.path}`);
     console.log(`files: ${result.fileCount}, traces: ${result.traceCount}`);
+  } else if (command === "metrics") {
+    const report = await buildMetricsReport(workspaceRoot());
+    if (args.includes("--json")) console.log(JSON.stringify(report, null, 2));
+    else printMetrics(report);
+  } else if (command === "replay-eval" || command === "eval") {
+    const report = await runReplayEvaluations(workspaceRoot());
+    if (args.includes("--json")) console.log(JSON.stringify(report, null, 2));
+    else console.log(JSON.stringify(report, null, 2));
   } else if (command === "smoke") {
     await smoke();
   } else if (command === "logs") {
@@ -136,6 +145,8 @@ Usage:
   arc start --provider ollama --model gemma4:31b-cloud
   arc app-dev --provider ollama --model gemma4:31b-cloud
   arc panel [--port <number>] [--no-open]
+  arc metrics --json
+  arc replay-eval --json
   arc reset --yes
 
 arc acp runs ARC as an Agent Client Protocol middleware over \`copilot --acp\`. Point any ACP client (ARC desktop, Zed, JetBrains, acp-ui) at \`arc acp\` as its agent command: prompts get ARC memory injected, every turn is captured, the deterministic observer gates review, and capsules are saved automatically.
@@ -144,7 +155,27 @@ arc start opens the locally built ARC desktop workbench with the same memory eng
 
 arc panel serves this repo's memory in the browser: a capsule browser, the memory-event ledger, and a probe that shows what would be injected for a given prompt.
 
+arc metrics reports redacted run telemetry, policy warnings, latency percentiles, token/cost provenance, and per-session totals. arc replay-eval checks recorded traces for retrieval precision, weak-match abstention, stale rejection, redaction, and the observed next-run memory outcome.
+
 Developer/import commands still exist for captured traces, tests, and diagnostics, but they are not the normal product path.`);
+}
+
+function printMetrics(report: Awaited<ReturnType<typeof buildMetricsReport>>): void {
+  const latency = report.summary.latencyMs;
+  const cost = report.summary.cost;
+  const tokens = report.summary.tokens;
+  console.log("ARC run metrics");
+  console.log(`sessions ${report.summary.sessionCount}, turns ${report.summary.turnCount}, tools ${report.summary.toolCalls}`);
+  console.log(`model first response p50/p95: ${formatMs(latency.modelFirstResponse.p50)} / ${formatMs(latency.modelFirstResponse.p95)}`);
+  console.log(`tool latency p50/p95/p99: ${formatMs(latency.tool.p50)} / ${formatMs(latency.tool.p95)} / ${formatMs(latency.tool.p99)}`);
+  console.log(`failed-tool rate: ${(report.summary.failedToolRate * 100).toFixed(1)}%, retries: ${report.summary.retries}`);
+  console.log(`tokens: ${tokens.total} (${tokens.provider} provider, ${tokens.estimated} estimated, ${tokens.unknownSessions} unknown sessions)`);
+  console.log(`cost: $${cost.knownUsd.toFixed(4)} known ($${cost.providerUsd.toFixed(4)} provider, $${cost.estimatedUsd.toFixed(4)} estimated, ${cost.unknownSessions} unknown sessions)`);
+  console.log("Use --json for the full per-session report and replay evaluations.");
+}
+
+function formatMs(value: number | null): string {
+  return value === null ? "unknown" : `${value}ms`;
 }
 
 async function reset(args: string[]): Promise<void> {
