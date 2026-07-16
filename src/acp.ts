@@ -12,6 +12,7 @@ import { localObserverStatus } from "./local-observer.js";
 import { workspaceRoot } from "./paths.js";
 import { buildInjectionPlan } from "./retrieval.js";
 import { debug, saveTraceEvents } from "./store.js";
+import { createRunTelemetry, providerUsageFromAcp, recordRunTelemetry, type ProviderUsageMeasurement } from "./telemetry.js";
 import type { ArcEvent, InjectionPlan, SidecarReviewOptions } from "./types.js";
 
 // `arc acp` is ARC as an Agent Client Protocol middleware. Any ACP client
@@ -44,6 +45,10 @@ interface TurnState {
   toolTitles: Map<string, string>;
   openTools: Map<string, string>;
   plan: InjectionPlan | null;
+  startedAtMs: number;
+  forwardedAtMs: number;
+  firstModelActivityAtMs?: number;
+  providerUsage: ProviderUsageMeasurement | null;
 }
 
 export async function runAcpProxy(args: string[]): Promise<number> {
@@ -130,6 +135,9 @@ export async function runAcpProxy(args: string[]): Promise<number> {
         pendingClientRequests.set(id, { method, params });
         if (method === "session/prompt") {
           await interceptPrompt(message, params);
+          const sessionId = stringValue(params.sessionId);
+          const turn = activeTurns.get(sessionId);
+          if (turn) turn.forwardedAtMs = Date.now();
         }
       }
       writeToAgent(message);
@@ -185,7 +193,10 @@ export async function runAcpProxy(args: string[]): Promise<number> {
       sawAgentThought: false,
       toolTitles: new Map(),
       openTools: new Map(),
-      plan: null
+      plan: null,
+      startedAtMs: Date.now(),
+      forwardedAtMs: Date.now(),
+      providerUsage: null
     };
     activeTurns.set(sessionId, turn);
 
@@ -238,6 +249,7 @@ export async function runAcpProxy(args: string[]): Promise<number> {
       // Synthetic closures must reach the client before the prompt response.
       closeOrphanTools(turn);
       const stopReason = stringValue(result.stopReason) || (message.error ? "error" : "unknown");
+      turn.providerUsage = mergeProviderUsage(turn.providerUsage, providerUsageFromAcp(result.usage, "turn"));
       const finalStopReason = stopReasonForTurn(turn, stopReason);
       if (finalStopReason !== stopReason) {
         message.result = { ...result, stopReason: finalStopReason };
@@ -261,6 +273,9 @@ export async function runAcpProxy(args: string[]): Promise<number> {
     if (!turn) return;
     const update = isRecord(params.update) ? params.update : {};
     const kind = stringValue(update.sessionUpdate);
+    if (kind === "agent_message_chunk" || kind === "agent_thought_chunk" || kind === "tool_call") {
+      turn.firstModelActivityAtMs ??= Date.now();
+    }
     if (kind === "agent_message_chunk") {
       const content = isRecord(update.content) ? update.content : {};
       if (content.type === "text" && typeof content.text === "string") {
@@ -282,6 +297,7 @@ export async function runAcpProxy(args: string[]): Promise<number> {
       turn.openTools.set(toolCallId, title);
       turn.events.push(arcEvent(turn.turnId, turn.workspace, "tool_start", {
         toolName: stringValue(update.kind) || "tool",
+        toolUseId: toolCallId,
         command: title,
         path: firstLocationPath(update)
       }));
@@ -295,6 +311,7 @@ export async function runAcpProxy(args: string[]): Promise<number> {
       turn.openTools.delete(toolCallId);
       turn.events.push(arcEvent(turn.turnId, turn.workspace, "tool_end", {
         toolName: "tool",
+        toolUseId: toolCallId,
         command: title,
         toolStatus: status === "completed" ? "success" : "failed",
         path: firstLocationPath(update)
@@ -320,6 +337,7 @@ export async function runAcpProxy(args: string[]): Promise<number> {
       });
       turn.events.push(arcEvent(turn.turnId, turn.workspace, "tool_end", {
         toolName: "tool",
+        toolUseId: toolCallId,
         command: title,
         toolStatus: cancelled ? "failed" : "success",
         text: cancelled ? "Synthesized: tool span was still open when the turn was cancelled." : "Synthesized: tool never reported completion before the turn ended."
@@ -342,14 +360,19 @@ export async function runAcpProxy(args: string[]): Promise<number> {
     const update = isRecord(params.update) ? params.update : {};
     if (stringValue(update.sessionUpdate) !== "usage_update") return;
     const sessionId = stringValue(params.sessionId);
-    if (sessionId) sessionsWithNativeUsage.add(sessionId);
+    if (!sessionId) return;
+    const usage = providerUsageFromAcp(update, "session");
+    if (!usage) return;
+    sessionsWithNativeUsage.add(sessionId);
+    const turn = activeTurns.get(sessionId);
+    if (turn) turn.providerUsage = mergeProviderUsage(turn.providerUsage, usage);
   }
 
   // The Ollama/Copilot ACP backend emits no usage, so the host context meter
   // stays blank. ARC sees the full prompt and response in the stream, so it can
   // estimate cumulative context and publish a usage_update the host renders.
   function emitUsage(turn: TurnState): void {
-    if (usageDisabled() || sessionsWithNativeUsage.has(turn.sessionId)) return;
+    if (usageDisabled() || sessionsWithNativeUsage.has(turn.sessionId) || turn.providerUsage?.tokens.source === "provider") return;
     const injected = turn.plan?.shouldInject && turn.plan.message ? turn.plan.message : "";
     const turnTokens = estimateTokens(turn.promptText) + estimateTokens(injected) + estimateTokens(turn.assistantText);
     const used = (sessionTokens.get(turn.sessionId) ?? 0) + turnTokens;
@@ -372,6 +395,23 @@ export async function runAcpProxy(args: string[]): Promise<number> {
     const completed = stopReason === "end_turn";
     turn.events.push(arcEvent(turn.turnId, turn.workspace, "session_end", { text: `ARC ACP turn ${stopReason}.` }));
     await saveTraceEvents(turn.events, turn.turnId, turn.workspace);
+    const telemetry = createRunTelemetry({
+      runner: "copilot",
+      sessionId: turn.sessionId,
+      turnId: turn.turnId,
+      startedAtMs: turn.startedAtMs,
+      forwardedAtMs: turn.forwardedAtMs,
+      firstModelActivityAtMs: turn.firstModelActivityAtMs,
+      endedAtMs: Date.now(),
+      stopReason,
+      events: turn.events,
+      providerUsage: turn.providerUsage,
+      estimatedInputText: `${turn.plan?.shouldInject ? turn.plan.message : ""}\n${turn.promptText}`,
+      estimatedOutputText: turn.assistantText,
+      plan: turn.plan
+    });
+    const warnings = await recordRunTelemetry(telemetry, turn.workspace);
+    for (const warning of warnings) notifyClient(turn.sessionId, `ARC policy warning: ${warning.message}`);
     await recordMemoryEvent({
       type: "runner.completed",
       workspace: turn.workspace,
@@ -384,8 +424,8 @@ export async function runAcpProxy(args: string[]): Promise<number> {
     // strong reviewer decides what to capsule. The client only hears about
     // actual saves, as a quiet thought-stream line.
     const reviewOptions: SidecarReviewOptions = turn.plan?.capsule?.id
-      ? { injectedCapsuleIds: [turn.plan.capsule.id] }
-      : {};
+      ? { injectedCapsuleIds: [turn.plan.capsule.id], telemetrySessionId: turn.sessionId }
+      : { telemetrySessionId: turn.sessionId };
     const outcome = await reviewEvents(turn.events, turn.workspace, turn.turnId, "auto", reviewOptions);
     if (outcome.status === "saved") {
       const count = outcome.capsuleIds?.length ?? 0;
@@ -450,6 +490,18 @@ function estimateTokens(text: string): number {
   const perToken = Number(process.env.ARC_ACP_CHARS_PER_TOKEN);
   const divisor = Number.isFinite(perToken) && perToken > 0 ? perToken : 4;
   return Math.ceil(text.length / divisor);
+}
+
+function mergeProviderUsage(
+  current: ProviderUsageMeasurement | null,
+  next: ProviderUsageMeasurement | null
+): ProviderUsageMeasurement | null {
+  if (!next) return current;
+  if (!current) return next;
+  return {
+    tokens: next.tokens.source === "provider" ? next.tokens : current.tokens,
+    cost: next.cost.source === "provider" ? next.cost : current.cost
+  };
 }
 
 function safePlan(prompt: string, workspace: string, recentPrompts: string[]): Promise<InjectionPlan | null> {

@@ -3,8 +3,9 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 
 import { readJsonl, writeJsonl } from "./json.js";
-import { cacheDir, debugPath, memoryEventsPath, memoryPath, reviewedPath, sidecarPath, workspaceRoot } from "./paths.js";
+import { cacheDir, debugPath, memoryEventsPath, memoryPath, reviewedPath, sidecarPath, telemetryPath, workspaceRoot } from "./paths.js";
 import { redactJson, redactSensitiveText } from "./redact.js";
+import { buildMetricsReport, sanitizedMetricsAggregate } from "./telemetry.js";
 
 export interface DebugBundleResult {
   path: string;
@@ -61,6 +62,16 @@ export async function writeDebugBundle(outDir?: string, workspace = workspaceRoo
       (manifest.files as unknown[]).push("copilot-log-summary.redacted.jsonl");
       fileCount += 1;
     }
+  }
+
+  // Telemetry debug output is aggregate-only. The raw redacted telemetry file
+  // stays local because per-call fingerprints and session identifiers are not
+  // needed to diagnose aggregate latency, usage, cost, policy, or replay health.
+  if (existsSync(telemetryPath(workspace))) {
+    const metrics = sanitizedMetricsAggregate(await buildMetricsReport(workspace));
+    await writeFile(join(root, "metrics.aggregate.redacted.json"), `${JSON.stringify(redactJson(metrics), null, 2)}\n`, "utf8");
+    (manifest.files as unknown[]).push("metrics.aggregate.redacted.json");
+    fileCount += 1;
   }
 
   manifest["traceCount"] = traceCount;

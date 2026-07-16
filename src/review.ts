@@ -74,6 +74,10 @@ async function reviewEventsUnlocked(
       await debug("review.injected_context", { sessionId, injectedCapsuleIds: options.injectedCapsuleIds }, workspace);
     }
     const review = await reviewPacket(packet, workspace, intent, options);
+    if (review?.shouldSave === false && review.reason?.startsWith("ARC reviewer hard")) {
+      await debug("review.skipped", { sessionId, reason: review.reason, policy: "hard_limit" }, workspace);
+      return { status: "skipped", reason: review.reason };
+    }
     const capsuleInputs = reviewCapsules(review);
     const saveableCapsules = capsuleInputs.filter((capsuleInput) => capsuleAllowedForOutcome(capsuleInput, packet.outcome.status));
     const sanitized = saveableCapsules.map((capsuleInput) => sanitizeFailedToolClaims(capsuleInput, events));

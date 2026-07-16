@@ -283,4 +283,5 @@ export interface SidecarReviewRequest {
 export interface SidecarReviewOptions {
   reviewer?: (request: SidecarReviewRequest) => Promise<SidecarReview | null>;
   injectedCapsuleIds?: string[];
+  telemetrySessionId?: string;
 }

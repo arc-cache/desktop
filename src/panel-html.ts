@@ -153,6 +153,24 @@ pre.inject-msg {
   padding: 14px 16px; white-space: pre-wrap; word-break: break-word;
   font-size: 12px; color: var(--ink-dim); max-width: 860px;
 }
+
+/* Metrics */
+#metrics { flex: 1; overflow-y: auto; padding: 24px 28px 60px; }
+.metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin-bottom: 24px; }
+.metric-card { background: var(--bg-raised); border: 1px solid var(--line); padding: 14px 15px; min-height: 92px; }
+.metric-card h3 { color: var(--ink-faint); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; margin-bottom: 7px; }
+.metric-value { color: var(--ink); font-family: var(--serif); font-size: 24px; line-height: 1.1; }
+.metric-note { color: var(--ink-faint); font-size: 10.5px; margin-top: 6px; }
+.metrics-heading { color: var(--amber); font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; margin: 22px 0 8px; }
+.metrics-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.metrics-table th { color: var(--ink-faint); font-weight: 500; text-transform: uppercase; letter-spacing: 0.08em; text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line-strong); }
+.metrics-table td { color: var(--ink-dim); padding: 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.metrics-table td:first-child { color: var(--ink); }
+.metrics-table .bad { color: var(--red); }
+.metrics-table .warn { color: var(--amber); }
+.eval-row { display: grid; grid-template-columns: minmax(190px, 1fr) 100px 2fr; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); color: var(--ink-dim); }
+.eval-row b { color: var(--ink); font-weight: 500; }
+.eval-row span:nth-child(2) { color: var(--amber); }
 footer { padding: 8px 22px; border-top: 1px solid var(--line); color: var(--ink-faint); font-size: 10.5px; display: flex; justify-content: space-between; gap: 12px; }
 footer span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 ::-webkit-scrollbar { width: 10px; }
@@ -178,6 +196,9 @@ footer span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .event-type { width: auto; }
   .event-detail { flex-basis: 100%; white-space: normal; }
   #probe { padding: 16px 14px; }
+  #metrics { padding: 16px 14px 40px; }
+  .eval-row { grid-template-columns: 1fr; gap: 2px; }
+  .metrics-table { display: block; overflow-x: auto; }
   .probe-row { flex-direction: column; }
   .probe-row button { padding: 9px 0; }
   footer { padding: 7px 14px; }
@@ -192,6 +213,7 @@ footer span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     <div class="counts">
       <span><b id="count-capsules">–</b> capsules</span>
       <span><b id="count-events">–</b> events</span>
+      <span><b id="count-runs">–</b> runs</span>
     </div>
     <div class="pulse" title="watching .agent-run-cache"></div>
   </header>
@@ -199,6 +221,7 @@ footer span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     <button data-tab="capsules" class="active">Capsules</button>
     <button data-tab="activity">Activity</button>
     <button data-tab="probe">Probe</button>
+    <button data-tab="metrics">Metrics</button>
   </nav>
   <main>
     <div class="pane active" id="pane-capsules">
@@ -219,6 +242,7 @@ footer span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         <div id="probe-result"></div>
       </div>
     </div>
+    <div class="pane" id="pane-metrics"><div id="metrics"></div></div>
   </main>
   <footer>
     <span id="cache-path"></span>
@@ -227,7 +251,7 @@ footer span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </div>
 <script>
 (function () {
-  var state = { capsules: [], events: [], selected: null, filter: "", status: null };
+  var state = { capsules: [], events: [], metrics: null, selected: null, filter: "", status: null };
 
   function el(tag, cls, text) {
     var node = document.createElement(tag);
@@ -476,6 +500,94 @@ footer span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     if (plan.message) result.appendChild(el("pre", "inject-msg", plan.message));
   }
 
+  function formatDuration(value) {
+    if (value === null || value === undefined) return "unknown";
+    if (value < 1000) return Math.round(value) + "ms";
+    return (value / 1000).toFixed(value < 10000 ? 1 : 0) + "s";
+  }
+
+  function formatTokens(value) {
+    if (value === null || value === undefined) return "unknown";
+    if (value >= 1000000) return (value / 1000000).toFixed(1) + "m";
+    if (value >= 1000) return (value / 1000).toFixed(1) + "k";
+    return String(value);
+  }
+
+  function formatCost(value) {
+    if (value === null || value === undefined) return "unknown";
+    return "$" + Number(value).toFixed(value < 0.01 ? 4 : 2);
+  }
+
+  function metricCard(title, value, note) {
+    var card = el("div", "metric-card");
+    card.appendChild(el("h3", "", title));
+    card.appendChild(el("div", "metric-value", value));
+    if (note) card.appendChild(el("div", "metric-note", note));
+    return card;
+  }
+
+  function renderMetrics() {
+    var container = document.getElementById("metrics");
+    container.textContent = "";
+    if (!state.metrics) {
+      container.appendChild(el("div", "empty", "No run telemetry recorded yet."));
+      return;
+    }
+    var summary = state.metrics.summary;
+    var latency = summary.latencyMs;
+    var grid = el("div", "metric-grid");
+    grid.appendChild(metricCard("Model first response", formatDuration(latency.modelFirstResponse.p50), "p50 · p95 " + formatDuration(latency.modelFirstResponse.p95)));
+    grid.appendChild(metricCard("Tool latency", formatDuration(latency.tool.p50), "p50 · p95 " + formatDuration(latency.tool.p95) + " · p99 " + formatDuration(latency.tool.p99)));
+    grid.appendChild(metricCard("Failed-tool rate", (summary.failedToolRate * 100).toFixed(1) + "%", summary.failedTools + " failed / " + summary.toolCalls + " calls · " + summary.retries + " retries"));
+    grid.appendChild(metricCard("Token usage", formatTokens(summary.tokens.total), summary.tokens.provider + " provider · " + summary.tokens.estimated + " estimated · " + summary.tokens.unknownSessions + " unknown"));
+    grid.appendChild(metricCard("Known cost", formatCost(summary.cost.knownUsd), formatCost(summary.cost.providerUsd) + " provider · " + formatCost(summary.cost.estimatedUsd) + " estimated · " + summary.cost.unknownSessions + " unknown"));
+    grid.appendChild(metricCard("Policy warnings", String(summary.warnings), "cost, slow tools, failures and retries"));
+    container.appendChild(grid);
+
+    container.appendChild(el("h3", "metrics-heading", "Recent sessions"));
+    var table = el("table", "metrics-table");
+    var head = el("thead");
+    var headRow = el("tr");
+    ["session", "duration", "tools", "failed", "retries", "tokens", "cost", "source", "warnings"].forEach(function (label) {
+      headRow.appendChild(el("th", "", label));
+    });
+    head.appendChild(headRow);
+    table.appendChild(head);
+    var body = el("tbody");
+    state.metrics.sessions.slice(0, 50).forEach(function (session) {
+      var row = el("tr");
+      row.appendChild(el("td", "", session.sessionId.slice(0, 12)));
+      row.appendChild(el("td", "", formatDuration(session.durationMs)));
+      row.appendChild(el("td", "", String(session.toolCalls)));
+      row.appendChild(el("td", session.failedTools ? "bad" : "", String(session.failedTools)));
+      row.appendChild(el("td", session.retries ? "warn" : "", String(session.retries)));
+      row.appendChild(el("td", "", formatTokens(session.tokens.total)));
+      row.appendChild(el("td", "", formatCost(session.cost.usd)));
+      row.appendChild(el("td", "", session.cost.source + " cost / " + session.tokens.source + " tokens"));
+      row.appendChild(el("td", session.warningCount ? "warn" : "", String(session.warningCount)));
+      body.appendChild(row);
+    });
+    table.appendChild(body);
+    container.appendChild(table);
+
+    var evaluations = state.metrics.evaluations;
+    container.appendChild(el("h3", "metrics-heading", "Recorded-trace replay"));
+    var evals = el("div");
+    function evalRow(name, value, detail) {
+      var row = el("div", "eval-row");
+      row.appendChild(el("b", "", name));
+      row.appendChild(el("span", "", value === null ? "no cases" : (value * 100).toFixed(1) + "%"));
+      row.appendChild(el("span", "", detail));
+      evals.appendChild(row);
+    }
+    evalRow("Retrieval precision", evaluations.retrievalPrecision.value, evaluations.retrievalPrecision.relevant + " relevant / " + evaluations.retrievalPrecision.evaluated + " evaluated injections");
+    evalRow("Weak-match abstention", evaluations.weakMatchAbstention.value, evaluations.weakMatchAbstention.abstained + " abstained / " + evaluations.weakMatchAbstention.weakMatchCases + " weak cases");
+    evalRow("Stale-capsule rejection", evaluations.staleCapsuleRejection.value, evaluations.staleCapsuleRejection.rejected + " rejected / " + evaluations.staleCapsuleRejection.staleCases + " stale cases");
+    evalRow("Telemetry redaction", evaluations.telemetryRedaction.passed ? 1 : 0, evaluations.telemetryRedaction.recordsScanned + " records scanned · " + evaluations.telemetryRedaction.violations + " violations");
+    evalRow("Injected memory helped", evaluations.retrievalPrecision.value, evaluations.injectedMemoryOutcome.helped + " helped · " + evaluations.injectedMemoryOutcome.didNotHelp + " did not help · " + evaluations.injectedMemoryOutcome.inconclusive + " inconclusive");
+    container.appendChild(evals);
+  }
+
   function switchTab(name) {
     document.querySelectorAll("nav button").forEach(function (button) {
       button.classList.toggle("active", button.dataset.tab === name);
@@ -491,16 +603,19 @@ footer span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       document.getElementById("cache-path").textContent = status.cacheDir;
       document.getElementById("count-capsules").textContent = status.capsuleCount;
       document.getElementById("count-events").textContent = status.eventCount;
+      document.getElementById("count-runs").textContent = status.runCount;
       document.getElementById("refreshed").textContent = "refreshed " + new Date().toLocaleTimeString();
-      var changed = !state.status || state.status.capsuleCount !== status.capsuleCount || state.status.eventCount !== status.eventCount;
+      var changed = !state.status || state.status.capsuleCount !== status.capsuleCount || state.status.eventCount !== status.eventCount || state.status.telemetryCount !== status.telemetryCount;
       state.status = status;
       if (!changed && !force) return;
-      return Promise.all([fetchJson("/api/capsules"), fetchJson("/api/events?limit=500")]).then(function (results) {
+      return Promise.all([fetchJson("/api/capsules"), fetchJson("/api/events?limit=500"), fetchJson("/api/metrics")]).then(function (results) {
         state.capsules = results[0].capsules;
         state.events = results[1].events;
+        state.metrics = results[2];
         renderList();
         renderDetail();
         renderActivity();
+        renderMetrics();
       });
     }).catch(function () {
       document.getElementById("refreshed").textContent = "connection lost — is arc panel still running?";

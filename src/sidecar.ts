@@ -8,6 +8,7 @@ import { cleanupSidecarCopilotSessions, listCopilotSessionIds } from "./copilot-
 import { sidecarPath } from "./paths.js";
 import { redactJson, redactSensitiveText } from "./redact.js";
 import { debug, loadCapsules } from "./store.js";
+import { executeReviewerCall } from "./telemetry.js";
 import { localObserverDecide } from "./local-observer.js";
 import type {
   AssembledDraft,
@@ -45,25 +46,43 @@ export async function reviewPacket(
   const command = process.env.AGENT_RUN_CACHE_REVIEWER_COMMAND;
   if (command) {
     const input = JSON.stringify(reviewInput);
-    const output = await runShellCommand(command, input);
-    const parsed = parseReview(output);
-    await recordSidecarExchange(workspace, "review", "command", input, output, parsed);
-    await debug("sidecar.review.command", { bytes: output.length }, workspace);
-    return parsed;
+    const execution = await executeReviewerCall({
+      workspace,
+      sessionId: options.telemetrySessionId ?? packet.sessionId,
+      source: "command",
+      input
+    }, async () => {
+      const output = await runShellCommand(command, input);
+      const parsed = parseReview(output);
+      await recordSidecarExchange(workspace, "review", "command", input, output, parsed);
+      await debug("sidecar.review.command", { bytes: output.length }, workspace);
+      return { value: parsed, output };
+    });
+    if (!execution.allowed) return reviewerBudgetDecline(execution.reason, workspace, packet.sessionId);
+    return execution.value ?? null;
   }
   const prompt = reviewPrompt(reviewInput, existingCapsules);
   if (options.reviewer) {
-    const parsed = await options.reviewer({
-      runner: reviewInput.runner,
-      intent,
-      packet: reviewInput,
-      prompt,
-      existingCapsules
+    const execution = await executeReviewerCall({
+      workspace,
+      sessionId: options.telemetrySessionId ?? packet.sessionId,
+      source: `${reviewInput.runner}-callback`,
+      input: prompt
+    }, async () => {
+      const parsed = await options.reviewer!({
+        runner: reviewInput.runner,
+        intent,
+        packet: reviewInput,
+        prompt,
+        existingCapsules
+      });
+      const output = JSON.stringify(parsed ?? null);
+      await recordSidecarExchange(workspace, "review", reviewInput.runner, prompt, output, parsed);
+      await debug(`sidecar.review.${reviewInput.runner}`, { bytes: output.length, source: "callback" }, workspace);
+      return { value: parsed, output };
     });
-    const output = JSON.stringify(parsed ?? null);
-    await recordSidecarExchange(workspace, "review", reviewInput.runner, prompt, output, parsed);
-    await debug(`sidecar.review.${reviewInput.runner}`, { bytes: output.length, source: "callback" }, workspace);
-    return parsed;
+    if (!execution.allowed) return reviewerBudgetDecline(execution.reason, workspace, packet.sessionId);
+    return execution.value ?? null;
   }
   if (process.env.AGENT_RUN_CACHE_MODEL_SIDECAR === "off") {
     await debug("sidecar.review.skipped", { reason: "AGENT_RUN_CACHE_MODEL_SIDECAR=off" }, workspace);
@@ -79,11 +98,30 @@ export async function reviewPacket(
     }, workspace);
     return { shouldSave: false, reason };
   }
-  const output = await runModelSidecar(prompt, workspace, runner);
-  const parsed = parseReview(output);
-  await recordSidecarExchange(workspace, "review", runner, prompt, output, parsed);
-  await debug(`sidecar.review.${runner}`, { bytes: output.length }, workspace);
-  return parsed;
+  const execution = await executeReviewerCall({
+    workspace,
+    sessionId: options.telemetrySessionId ?? packet.sessionId,
+    source: runner,
+    input: prompt
+  }, async () => {
+    const output = await runModelSidecar(prompt, workspace, runner);
+    const parsed = parseReview(output);
+    await recordSidecarExchange(workspace, "review", runner, prompt, output, parsed);
+    await debug(`sidecar.review.${runner}`, { bytes: output.length }, workspace);
+    return { value: parsed, output };
+  });
+  if (!execution.allowed) return reviewerBudgetDecline(execution.reason, workspace, packet.sessionId);
+  return execution.value ?? null;
+}
+
+async function reviewerBudgetDecline(
+  reason: string | undefined,
+  workspace: string,
+  sessionId: string
+): Promise<SidecarReview> {
+  const message = reason ?? "ARC reviewer hard limit reached.";
+  await debug("sidecar.review.skipped", { reason: message, sessionId, policy: "hard_limit" }, workspace);
+  return { shouldSave: false, reason: message };
 }
 
 export async function consultCapsuleVault(
