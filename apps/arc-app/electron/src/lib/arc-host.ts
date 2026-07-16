@@ -48,6 +48,9 @@ interface RuntimeModules {
   buildInjectionPlan: (prompt: string, workspace: string, context?: { recentPrompts?: string[]; runner?: ArcHostEngine }) => Promise<InjectionPlan>;
   saveTraceEvents: (events: ArcEvent[], sessionId: string, workspace: string) => Promise<string>;
   recordMemoryEvent: (event: Record<string, unknown>) => Promise<void>;
+  createRunTelemetry: (input: DesktopRunTelemetryInput) => unknown;
+  recordRunTelemetry: (record: unknown, workspace: string) => Promise<unknown>;
+  providerUsageFromAcp: (value: unknown, scope: "turn" | "session") => ProviderUsageMeasurement | null;
   maybeReviewTurn: (
     events: ArcEvent[],
     plan: InjectionPlan,
@@ -75,6 +78,10 @@ interface TurnState {
   workspace: string;
   prompt: string;
   plan: InjectionPlan;
+  startedAtMs: number;
+  forwardedAtMs: number;
+  firstModelActivityAtMs?: number;
+  providerUsageValue?: unknown;
   events: ArcEvent[];
   toolNames: Map<string, string>;
   claudeAssistantDelta: string;
@@ -87,6 +94,38 @@ interface BeginTurnInput {
   sessionId: string;
   cwd: string;
   prompt: string;
+}
+
+interface ProviderUsageMeasurement {
+  tokens: {
+    inputTokens: number | null;
+    outputTokens: number | null;
+    totalTokens: number | null;
+    source: "provider" | "estimate" | "unknown";
+    scope: "turn" | "session";
+  };
+  cost: {
+    amount: number | null;
+    currency: string;
+    source: "provider" | "estimate" | "unknown";
+    scope: "turn" | "session";
+  };
+}
+
+interface DesktopRunTelemetryInput {
+  runner: ArcHostEngine;
+  sessionId: string;
+  turnId: string;
+  startedAtMs: number;
+  forwardedAtMs: number;
+  firstModelActivityAtMs?: number;
+  endedAtMs: number;
+  stopReason: string;
+  events: ArcEvent[];
+  providerUsage?: ProviderUsageMeasurement | null;
+  estimatedInputText: string;
+  estimatedOutputText: string;
+  plan: InjectionPlan;
 }
 
 interface SidecarReviewRequest {
@@ -103,6 +142,7 @@ interface SidecarReview {
 
 interface SidecarReviewOptions {
   reviewer?: (request: SidecarReviewRequest) => Promise<SidecarReview | null>;
+  telemetrySessionId?: string;
 }
 
 const activeTurns = new Map<string, TurnState>();
@@ -114,6 +154,7 @@ export async function beginArcTurn(input: BeginTurnInput): Promise<{ prompt: str
     return { prompt: input.prompt, injected: false };
   }
 
+  const startedAtMs = Date.now();
   const key = turnKey(input.engine, input.sessionId);
   const turnId = `${input.engine}-${input.sessionId.slice(0, 8)}-${randomUUID()}`;
   const runtime = await loadRuntime();
@@ -142,6 +183,8 @@ export async function beginArcTurn(input: BeginTurnInput): Promise<{ prompt: str
     workspace: input.cwd,
     prompt: input.prompt,
     plan,
+    startedAtMs,
+    forwardedAtMs: startedAtMs,
     events,
     toolNames: new Map(),
     claudeAssistantDelta: "",
@@ -181,6 +224,8 @@ export async function beginArcTurn(input: BeginTurnInput): Promise<{ prompt: str
   const prompt = plan.shouldInject
     ? `${plan.message}\n\nUser task:\n${input.prompt}`
     : input.prompt;
+  const state = activeTurns.get(key);
+  if (state) state.forwardedAtMs = Date.now();
   return { prompt, turnId, injected: plan.shouldInject };
 }
 
@@ -193,6 +238,7 @@ export function recordClaudeSdkEvent(
   if (!state) return;
 
   if (message.type === "stream_event") {
+    markModelActivity(state);
     const event = recordValue(message.event);
     if (event.type === "content_block_delta") {
       const delta = recordValue(event.delta);
@@ -204,6 +250,7 @@ export function recordClaudeSdkEvent(
   }
 
   if (message.type === "assistant") {
+    markModelActivity(state);
     const blocks = recordValue(message.message).content;
     if (!Array.isArray(blocks)) return;
     const assistantText: string[] = [];
@@ -257,6 +304,13 @@ export function recordClaudeSdkEvent(
   }
 
   if (message.type === "result") {
+    state.providerUsageValue = {
+      usage: message.usage,
+      cost: {
+        amount: numericValue(message.total_cost_usd),
+        currency: "USD",
+      },
+    };
     const status = message.is_error ? "failed" : "completed";
     void finishArcTurn(state.engine, sessionId, status).then((notice) => {
       if (notice) onReviewNotice?.(notice);
@@ -275,6 +329,7 @@ export function recordCodexLikeNotification(
   const params = recordValue(notification.params);
 
   if (notification.method === "item/agentMessage/delta") {
+    markModelActivity(state);
     const itemId = stringValue(params.itemId);
     const delta = stringValue(params.delta);
     if (itemId && delta) {
@@ -296,6 +351,7 @@ export function recordCodexLikeNotification(
     const item = recordValue(params.item);
     const toolName = codexLikeToolName(item);
     if (!toolName) return;
+    markModelActivity(state);
     const itemId = stringValue(item.id) || randomUUID();
     state.toolNames.set(itemId, toolName);
     state.events.push(eventFor(engine, state.turnId, state.workspace, "tool_start", `${engine}-app-server`, shortJson(item), {
@@ -311,6 +367,7 @@ export function recordCodexLikeNotification(
   if (notification.method === "item/completed") {
     const item = recordValue(params.item);
     if (item.type === "agentMessage") {
+      markModelActivity(state);
       const itemId = stringValue(item.id);
       const text = stringValue(item.text) || (itemId ? state.codexAgentDeltas.get(itemId) ?? "" : "");
       if (text) {
@@ -364,6 +421,38 @@ export async function finishArcTurn(engine: ArcHostEngine, sessionId: string, st
 
   try {
     await runtime.saveTraceEvents(state.events, state.turnId, state.workspace);
+    try {
+      const telemetry = runtime.createRunTelemetry({
+        runner: state.engine,
+        sessionId: state.sessionId,
+        turnId: state.turnId,
+        startedAtMs: state.startedAtMs,
+        forwardedAtMs: state.forwardedAtMs,
+        firstModelActivityAtMs: state.firstModelActivityAtMs,
+        endedAtMs: Date.now(),
+        stopReason: status === "completed" ? "end_turn" : "failed",
+        events: state.events,
+        providerUsage: state.providerUsageValue
+          ? runtime.providerUsageFromAcp(state.providerUsageValue, "turn")
+          : null,
+        estimatedInputText: state.plan.shouldInject
+          ? `${state.plan.message}\n\nUser task:\n${state.prompt}`
+          : state.prompt,
+        estimatedOutputText: state.events
+          .filter((event) => event.type === "assistant_message")
+          .map((event) => event.text ?? "")
+          .join("\n"),
+        plan: state.plan,
+      });
+      await runtime.recordRunTelemetry(telemetry, state.workspace);
+    } catch (error) {
+      await runtime.debug("desktop_host.telemetry_failed", {
+        engine,
+        sessionId,
+        turnId: state.turnId,
+        error: error instanceof Error ? error.message : String(error),
+      }, state.workspace).catch(() => undefined);
+    }
     await runtime.recordMemoryEvent({
       type: "runner.completed",
       workspace: state.workspace,
@@ -382,7 +471,10 @@ export async function finishArcTurn(engine: ArcHostEngine, sessionId: string, st
       status,
       state.turnId,
       state.workspace,
-      reviewOptionsForEngine(engine, state.workspace),
+      {
+        ...reviewOptionsForEngine(engine, state.workspace),
+        telemetrySessionId: state.sessionId,
+      },
     );
     return arcReviewNoticeFromDecision(review);
   } catch (error) {
@@ -465,17 +557,21 @@ async function loadRuntime(): Promise<RuntimeModules | null> {
         log("ARC_HOST", "runtime dist not found; ARC host disabled");
         return null;
       }
-      const [retrieval, store, ledger, reviewDecision] = await Promise.all([
+      const [retrieval, store, ledger, reviewDecision, telemetry] = await Promise.all([
         import(pathToFileURL(join(distDir, "retrieval.js")).href),
         import(pathToFileURL(join(distDir, "store.js")).href),
         import(pathToFileURL(join(distDir, "ledger.js")).href),
         import(pathToFileURL(join(distDir, "review-decision.js")).href),
+        import(pathToFileURL(join(distDir, "telemetry.js")).href),
       ]);
       return {
         buildInjectionPlan: retrieval.buildInjectionPlan,
         saveTraceEvents: store.saveTraceEvents,
         debug: store.debug,
         recordMemoryEvent: ledger.recordMemoryEvent,
+        createRunTelemetry: telemetry.createRunTelemetry,
+        recordRunTelemetry: telemetry.recordRunTelemetry,
+        providerUsageFromAcp: telemetry.providerUsageFromAcp,
         maybeReviewTurn: reviewDecision.maybeReviewTurn,
       } satisfies RuntimeModules;
     })().catch((error) => {
@@ -484,6 +580,10 @@ async function loadRuntime(): Promise<RuntimeModules | null> {
     });
   }
   return runtimePromise;
+}
+
+function markModelActivity(state: TurnState): void {
+  state.firstModelActivityAtMs ??= Date.now();
 }
 
 function turnKey(engine: ArcHostEngine, sessionId: string): string {

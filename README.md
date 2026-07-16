@@ -81,7 +81,7 @@ ARC runs in six stages. The capsule forms in stages two through four.
 
 ## Run telemetry and policy
 
-The Copilot ACP middleware also writes a redacted local run record to
+Copilot runs through either the ACP middleware or ARC Desktop write the same redacted local run record to
 `.agent-run-cache/telemetry.jsonl`. It keeps tool kind, paired duration and outcome,
 retry counts, session outcome, observed model latency, token usage, cost provenance,
 and retrieval outcome. It does not keep prompts, commands, tool output, paths, or
@@ -90,7 +90,8 @@ usage is absent, token counts are labeled `estimate` and cost remains `unknown`.
 
 Run `arc metrics --json` for latency percentiles, failed-tool rate, token/cost totals,
 policy warnings, per-session costs, and recorded-trace replay results. The same view is
-available under Metrics in `arc panel`. `arc replay-eval --json` runs just the replay
+available in ARC Desktop under **Memory → Metrics**, and under Metrics in `arc panel`.
+`arc replay-eval --json` runs just the replay
 checks: observed retrieval precision, weak-match abstention, stale-capsule rejection,
 telemetry redaction, and whether an injected run had a clean successful outcome. The
 help result is deliberately identified as a deterministic observational proxy, not a

@@ -28,8 +28,10 @@ interface ArcHostTestGlobals {
       turnId: string;
       workspace: string;
       hasReviewer: boolean;
+      telemetrySessionId?: string;
       reviewerResult?: unknown;
     }>;
+    telemetry: Array<{ input: Record<string, unknown>; record: Record<string, unknown>; workspace: string }>;
     debug: unknown[];
   };
   __arcHostPlan?: unknown;
@@ -82,7 +84,12 @@ describe("arc host native engine capture", () => {
         type: "stream_event",
         event: { type: "content_block_delta", delta: { type: "text_delta", text: "the tests" } },
       });
-      arcHost.recordClaudeSdkEvent("claude-session", { type: "result", subtype: "success" }, (notice) => {
+      arcHost.recordClaudeSdkEvent("claude-session", {
+        type: "result",
+        subtype: "success",
+        usage: { input_tokens: 120, output_tokens: 30 },
+        total_cost_usd: 0.02,
+      }, (notice) => {
         notices.push(notice);
       });
 
@@ -96,6 +103,25 @@ describe("arc host native engine capture", () => {
       });
       expect(review.runnerStatus).toBe("completed");
       expect(review.hasReviewer).toBe(false);
+      expect(review.telemetrySessionId).toBe("claude-session");
+      expect(calls().telemetry[0]).toMatchObject({
+        input: {
+          runner: "claude",
+          sessionId: "claude-session",
+          stopReason: "end_turn",
+          estimatedInputText: "fix the tests",
+          estimatedOutputText: "fixed the tests",
+          providerUsage: {
+            cost: { amount: 0.02, source: "provider" },
+          },
+        },
+        record: {
+          kind: "run",
+          runner: "claude",
+          sessionId: "claude-session",
+        },
+        workspace,
+      });
       expect(notices).toMatchObject([
         { title: "Claude memory saved", status: "saved", text: "Saved route." },
       ]);
@@ -172,6 +198,7 @@ describe("arc host native engine capture", () => {
       await waitForReviews(1);
       const review = calls().reviews[0];
       expect(review.hasReviewer).toBe(true);
+      expect(review.telemetrySessionId).toBe("codex-session");
       expect(review.events.find((event) => event.type === "tool_end")).toMatchObject({
         runner: "codex",
         toolName: "Bash",
@@ -263,7 +290,7 @@ function writeRuntimeStubs(dist: string): void {
   mkdirSync(dist, { recursive: true });
   writeFileSync(join(dist, "retrieval.js"), `
     function calls() {
-      globalThis.__arcHostCalls ||= { injectionPlans: [], memoryEvents: [], savedTraces: [], reviews: [], debug: [] };
+      globalThis.__arcHostCalls ||= { injectionPlans: [], memoryEvents: [], savedTraces: [], reviews: [], telemetry: [], debug: [] };
       return globalThis.__arcHostCalls;
     }
     export async function buildInjectionPlan(prompt, workspace, context) {
@@ -273,7 +300,7 @@ function writeRuntimeStubs(dist: string): void {
   `);
   writeFileSync(join(dist, "store.js"), `
     function calls() {
-      globalThis.__arcHostCalls ||= { injectionPlans: [], memoryEvents: [], savedTraces: [], reviews: [], debug: [] };
+      globalThis.__arcHostCalls ||= { injectionPlans: [], memoryEvents: [], savedTraces: [], reviews: [], telemetry: [], debug: [] };
       return globalThis.__arcHostCalls;
     }
     export async function saveTraceEvents(events, sessionId, workspace) {
@@ -286,7 +313,7 @@ function writeRuntimeStubs(dist: string): void {
   `);
   writeFileSync(join(dist, "ledger.js"), `
     function calls() {
-      globalThis.__arcHostCalls ||= { injectionPlans: [], memoryEvents: [], savedTraces: [], reviews: [], debug: [] };
+      globalThis.__arcHostCalls ||= { injectionPlans: [], memoryEvents: [], savedTraces: [], reviews: [], telemetry: [], debug: [] };
       return globalThis.__arcHostCalls;
     }
     export async function recordMemoryEvent(event) {
@@ -300,17 +327,38 @@ function writeRuntimeStubs(dist: string): void {
   `);
   writeFileSync(join(dist, "review-decision.js"), `
     function calls() {
-      globalThis.__arcHostCalls ||= { injectionPlans: [], memoryEvents: [], savedTraces: [], reviews: [], debug: [] };
+      globalThis.__arcHostCalls ||= { injectionPlans: [], memoryEvents: [], savedTraces: [], reviews: [], telemetry: [], debug: [] };
       return globalThis.__arcHostCalls;
     }
     export async function maybeReviewTurn(events, plan, runnerStatus, turnId, workspace, options) {
-      const review = { events, plan, runnerStatus, turnId, workspace, hasReviewer: typeof options?.reviewer === "function" };
+      const review = { events, plan, runnerStatus, turnId, workspace, hasReviewer: typeof options?.reviewer === "function", telemetrySessionId: options?.telemetrySessionId };
       calls().reviews.push(review);
       if (globalThis.__arcHostInvokeReviewer && typeof options?.reviewer === "function") {
         review.reviewerResult = await options.reviewer({ prompt: "review this turn" });
         return review.reviewerResult;
       }
       return globalThis.__arcHostReview || null;
+    }
+  `);
+  writeFileSync(join(dist, "telemetry.js"), `
+    function calls() {
+      globalThis.__arcHostCalls ||= { injectionPlans: [], memoryEvents: [], savedTraces: [], reviews: [], telemetry: [], debug: [] };
+      return globalThis.__arcHostCalls;
+    }
+    export function providerUsageFromAcp(value) {
+      if (!value?.usage && value?.cost?.amount == null) return null;
+      return {
+        tokens: { inputTokens: value?.usage?.input_tokens ?? null, outputTokens: value?.usage?.output_tokens ?? null, totalTokens: (value?.usage?.input_tokens ?? 0) + (value?.usage?.output_tokens ?? 0), source: value?.usage ? "provider" : "unknown", scope: "turn" },
+        cost: { amount: value?.cost?.amount ?? null, currency: "USD", source: value?.cost?.amount == null ? "unknown" : "provider", scope: "turn" },
+      };
+    }
+    export function createRunTelemetry(input) {
+      globalThis.__arcHostTelemetryInput = input;
+      return { kind: "run", runner: input.runner, sessionId: input.sessionId, turnId: input.turnId };
+    }
+    export async function recordRunTelemetry(record, workspace) {
+      const input = globalThis.__arcHostTelemetryInput;
+      calls().telemetry.push({ input: input || {}, record, workspace });
     }
   `);
   writeFileSync(join(dist, "app-server.js"), `
