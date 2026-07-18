@@ -264,7 +264,7 @@ describe("checkForUpdates", () => {
 
   it("keeps missing GitHub update feeds quiet", async () => {
     mockAutoUpdater.checkForUpdates.mockRejectedValueOnce(
-      new Error("HttpError: 404 method: GET url: https://github.com/AyubMoh1/agent-run-cache/releases.atom"),
+      new Error("HttpError: 404 method: GET url: https://github.com/arc-cache/desktop/releases.atom"),
     );
 
     await checkForUpdates("startup");
@@ -530,7 +530,7 @@ describe("initAutoUpdater", () => {
       await getHandler("updater:install")();
 
       expect(shell.openExternal).toHaveBeenCalledWith(
-        "https://github.com/AyubMoh1/agent-run-cache/releases/tag/v0.12.1",
+        "https://github.com/arc-cache/desktop/releases/tag/v0.12.1",
       );
       expect(mockWebContents.send).toHaveBeenCalledWith(
         "updater:install-error",
@@ -548,7 +548,7 @@ describe("initAutoUpdater", () => {
       await getHandler("updater:install")();
 
       expect(shell.openExternal).toHaveBeenCalledWith(
-        "https://github.com/AyubMoh1/agent-run-cache/releases/latest",
+        "https://github.com/arc-cache/desktop/releases/latest",
       );
     });
   });

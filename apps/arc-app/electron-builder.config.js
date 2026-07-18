@@ -277,8 +277,8 @@ module.exports = {
   // --- Auto-update ---
   publish: {
     provider: "github",
-    owner: "AyubMoh1",
-    repo: "agent-run-cache",
+    owner: "arc-cache",
+    repo: "desktop",
     releaseType: "release",
   },
 

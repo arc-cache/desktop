@@ -1,12 +1,9 @@
 {
   "name": "agent-run-cache",
-  "version": "2.0.0",
+  "version": "2.0.1",
+  "private": true,
   "description": "Local run cache for coding-agent CLI sessions.",
   "type": "module",
-  "bin": {
-    "arc": "./dist/cli.js",
-    "agent-run-cache": "./dist/cli.js"
-  },
   "files": [
     "dist",
     "scripts/verify-desktop-contract.mjs",
@@ -29,7 +26,7 @@
     "app:release:mac": "node scripts/release-mac.mjs",
     "app:ship": "node scripts/ship-arc-app.mjs",
     "prepare": "npm run build",
-    "postinstall": "node -e \"console.log('Agent Run Cache installed. In a repo checkout, run npm run app:start to open the ARC desktop workbench.')\"",
+    "postinstall": "node -e \"console.log('ARC Desktop dependencies installed. Run npm run app:start to open the development workbench.')\"",
     "test": "npm run build && node --test test/*.test.js",
     "verify:desktop:ollama": "npm run build && node scripts/verify-desktop-ollama.mjs",
     "verify:desktop:contract": "npm run build && node scripts/verify-desktop-contract.mjs",

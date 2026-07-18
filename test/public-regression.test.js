@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
 
 import { redactSensitiveText } from "../dist/redact.js";
@@ -46,6 +46,19 @@ function restoreEnv(name, value) {
   if (value === undefined) delete process.env[name];
   else process.env[name] = value;
 }
+
+test("Desktop stays private and never owns the global ARC commands", async () => {
+  const desktopRuntime = JSON.parse(await readFile(resolve("package.json"), "utf8"));
+  const desktopApp = JSON.parse(await readFile(resolve("apps/arc-app/package.json"), "utf8"));
+  const builderConfig = await readFile(resolve("apps/arc-app/electron-builder.config.js"), "utf8");
+
+  assert.equal(desktopRuntime.private, true);
+  assert.equal(desktopRuntime.bin, undefined);
+  assert.equal(desktopRuntime.version, desktopApp.version);
+  assert.match(builderConfig, /owner: "arc-cache"/);
+  assert.match(builderConfig, /repo: "desktop"/);
+  assert.doesNotMatch(builderConfig, /AyubMoh1|repo: "agent-run-cache"/);
+});
 
 test("redaction handles generic secret assignment names", () => {
   const input = [
