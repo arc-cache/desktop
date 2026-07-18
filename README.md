@@ -3,10 +3,10 @@
 > ARC watches a coding agent solve something in your repo, keeps the route that
 > worked, and hands it back the next time you ask for the same kind of thing.
 
-[![Latest release](https://img.shields.io/github/v/release/AyubMoh1/agent-run-cache?label=release)](https://github.com/AyubMoh1/agent-run-cache/releases/latest)
+[![Latest release](https://img.shields.io/github/v/release/arc-cache/desktop?label=release)](https://github.com/arc-cache/desktop/releases/latest)
 [![License](https://img.shields.io/badge/license-Apache--2.0%20%2B%20MIT-blue)](#license)
-[![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon-111111?logo=apple)](https://github.com/AyubMoh1/agent-run-cache/releases/latest)
-[![Linux](https://img.shields.io/badge/Linux-x64-FCC624?logo=linux&logoColor=black)](https://github.com/AyubMoh1/agent-run-cache/releases/latest)
+[![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon-111111?logo=apple)](https://github.com/arc-cache/desktop/releases/latest)
+[![Linux](https://img.shields.io/badge/Linux-x64-FCC624?logo=linux&logoColor=black)](https://github.com/arc-cache/desktop/releases/latest)
 
 ![ARC desktop workbench showing a saved command capsule](docs/arc-workbench-command-capsule.png)
 
@@ -148,12 +148,34 @@ keys are wrapped per member device with RSA-OAEP.
 
 | Platform | Download |
 |----------|----------|
-| macOS (Apple Silicon) | [Latest release](https://github.com/AyubMoh1/agent-run-cache/releases/latest) |
-| Linux (x64) | [Latest release](https://github.com/AyubMoh1/agent-run-cache/releases/latest) |
+| macOS (Apple Silicon) | [Latest release](https://github.com/arc-cache/desktop/releases/latest) |
+| Linux (x64) | [Latest release](https://github.com/arc-cache/desktop/releases/latest) |
 
 Use ARC with the local agent you already run. The desktop app ships engines for
 Claude Code, Codex, and Copilot, and can add external ACP agents. Install and sign
 in to the one you want; the GitHub Copilot CLI is only needed for Copilot workflows.
+
+### Desktop and ARC Copilot together
+
+ARC Desktop bundles its runtime inside the application and does not install or
+own a global `arc` executable. ARC Copilot is the sole owner of the `arc` and
+`agent-run-cache` command aliases. Both products deliberately use the same local
+`.agent-run-cache` project data, so they can be installed together without a PATH
+or npm package collision.
+
+Install or upgrade ARC Copilot with its migration-aware installer. It removes the
+retired global `agent-run-cache` npm package, upgrades `arc-copilot`, reconciles
+the earlier native install location, and verifies the resulting command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/arc-cache/copilot/main/install.sh | sh
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/arc-cache/copilot/main/install.ps1 | iex
+```
 
 ## Quickstart
 

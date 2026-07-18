@@ -45,8 +45,8 @@ export function getErrorMessage(err: unknown): string {
 
 function manualDownloadUrl(): string {
   return lastDownloadedVersion
-    ? `https://github.com/AyubMoh1/agent-run-cache/releases/tag/v${lastDownloadedVersion}`
-    : "https://github.com/AyubMoh1/agent-run-cache/releases/latest";
+    ? `https://github.com/arc-cache/desktop/releases/tag/v${lastDownloadedVersion}`
+    : "https://github.com/arc-cache/desktop/releases/latest";
 }
 
 function openManualDownloadPage(getMainWindow: () => BrowserWindow | null, message: string): void {

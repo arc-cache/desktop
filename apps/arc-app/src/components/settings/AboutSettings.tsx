@@ -106,19 +106,19 @@ export const AboutSettings = memo(function AboutSettings() {
               <AboutLink
                 icon={Github}
                 label="GitHub Repository"
-                href="https://github.com/AyubMoh1/agent-run-cache"
+                href="https://github.com/arc-cache/desktop"
                 description="Source code, issues &amp; releases"
               />
               <AboutLink
                 icon={Scale}
                 label="Runtime License"
-                href="https://github.com/AyubMoh1/agent-run-cache/blob/main/LICENSE"
+                href="https://github.com/arc-cache/desktop/blob/main/LICENSE"
                 description="Apache-2.0"
               />
               <AboutLink
                 icon={Scale}
                 label="App License"
-                href="https://github.com/AyubMoh1/agent-run-cache/blob/main/apps/arc-app/LICENSE"
+                href="https://github.com/arc-cache/desktop/blob/main/apps/arc-app/LICENSE"
                 description="MIT"
               />
             </div>

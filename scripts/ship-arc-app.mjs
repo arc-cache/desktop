@@ -81,7 +81,7 @@ function zipPackagedApp() {
   }
   const appPackage = JSON.parse(readFileSync(join(appDir, "package.json"), "utf8"));
   const productName = String(appPackage.productName ?? "ARC");
-  const version = String(appPackage.version ?? "2.0.0");
+  const version = String(appPackage.version ?? "2.0.1");
   const zipPath = join(releaseDir, version, `${productName}-${version}-${process.arch}-mac.zip`);
   rmSync(zipPath, { force: true });
   run("ditto", ["-ck", "--keepParent", appBundle, zipPath]);
